@@ -1,0 +1,93 @@
+# =========================
+# OS-specific files
+# =========================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# =========================
+# Editors & IDEs
+# =========================
+
+# VS Code
+.vscode/
+.history/
+
+# JetBrains (IntelliJ, PyCharm, WebStorm, etc.)
+.idea/
+*.iml
+
+# Others
+*.swp
+*.swo
+*.swn
+*.bak
+
+# =========================
+# Dependencies
+# =========================
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Python
+venv/
+.env/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# =========================
+# Build / Dist / Logs
+# =========================
+
+dist/
+build/
+out/
+coverage/
+logs/
+*.log
+
+# =========================
+# Environment & Secrets
+# =========================
+
+.env
+.env.*
+*.local
+*.secret
+*.key
+*.pem
+
+# =========================
+# Misc caches
+# =========================
+
+.cache/
+.tmp/
+.temp/
+.idea_modules/
+
+# =========================
+# Project-specific overrides
+# =========================
+# Add any framework/tool specific ignores below.
+# e.g. for React, Django, Laravel, etc.
