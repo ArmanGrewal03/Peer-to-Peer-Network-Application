@@ -12,7 +12,6 @@
 #include <arpa/inet.h>
 #include "pdu.h"
 
-#define DEFAULT_PORT 3000
 #define BUFLEN 256
 
 /* Global content list */
@@ -31,7 +30,7 @@ int main(int argc, char *argv[])
     struct sockaddr_in sin, fsin;
     socklen_t alen;
     int s;
-    int port = DEFAULT_PORT;
+    int port = 3000;
     struct pdu in, out;
 
     /* Parse command line arguments */

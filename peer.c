@@ -1,6 +1,6 @@
 /* peer.c - P2P Peer Application
- * Can register content, search, download, list, and deregister content
- * Uses UDP for index server communication and TCP for content download
+ * Can register content, search, download, list, and deregister content.
+ * Uses UDP for index server communication and TCP for content download.
  */
 
 #include <stdio.h>
@@ -9,27 +9,26 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/select.h>
-#include <sys/types.h>
 #include <sys/signal.h>
 #include <sys/wait.h>
+
 #include "pdu.h"
 
-#define DEFAULT_INDEX_PORT 3000
-#define DEFAULT_INDEX_HOST "localhost"
-#define BUFLEN 256
+#define BUFLEN          256     /* buffer length */
 #define MAX_TCP_SOCKETS 10
 
 /* Structure to track registered content and their TCP sockets */
 struct registered_content {
     char peer_name[PEER_NAME_SIZE + 1];
     char content_name[CONTENT_NAME_SIZE + 1];
-    char filename[256];     /* Filename of the content file */
-    int tcp_socket;         /* Listening TCP socket for this content */
+    char filename[256];                 /* Filename of the content file */
+    int tcp_socket;                     /* Listening TCP socket for this content */
     struct sockaddr_in tcp_addr;
     struct registered_content *next;
 };
@@ -55,30 +54,32 @@ struct registered_content *find_registered_content(const char *content_name);
 
 int main(int argc, char **argv)
 {
-    char *index_host = DEFAULT_INDEX_HOST;
-    int index_port = DEFAULT_INDEX_PORT;
+    const char *index_server = "127.0.0.1";
+    int index_port = 3000;
     struct hostent *hp;
     fd_set rfds, afds;
     char input[BUFLEN];
+    struct registered_content *reg;
+    int nready;
 
     /* Parse command line arguments */
     switch (argc) {
     case 1:
         break;
     case 2:
-        index_host = argv[1];
+        index_server = argv[1];
         break;
     case 3:
-        index_host = argv[1];
+        index_server = argv[1];
         index_port = atoi(argv[2]);
         break;
     default:
-        fprintf(stderr, "Usage: %s [index_host] [index_port]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [index_server] [index_port]\n", argv[0]);
         exit(1);
     }
 
     /* Get peer name */
-    printf("Enter your peer name (max 10 characters): ");
+    printf("Enter your peer name (max %d characters): ", PEER_NAME_SIZE);
     fflush(stdout);
     if (!fgets(my_peer_name, sizeof(my_peer_name), stdin)) {
         fprintf(stderr, "Failed to read peer name\n");
@@ -95,9 +96,10 @@ int main(int argc, char **argv)
     index_server_addr.sin_family = AF_INET;
     index_server_addr.sin_port = htons(index_port);
 
-    if ((hp = gethostbyname(index_host))) {
+    hp = gethostbyname(index_server);
+    if (hp != NULL) {
         memcpy(&index_server_addr.sin_addr, hp->h_addr, hp->h_length);
-    } else if ((index_server_addr.sin_addr.s_addr = inet_addr(index_host)) == INADDR_NONE) {
+    } else if ((index_server_addr.sin_addr.s_addr = inet_addr(index_server)) == INADDR_NONE) {
         fprintf(stderr, "Can't get index server address\n");
         exit(1);
     }
@@ -108,14 +110,14 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    /* Connect UDP socket to index server */
-    if (connect(udp_sock, (struct sockaddr *)&index_server_addr, sizeof(index_server_addr)) < 0) {
+    if (connect(udp_sock, (struct sockaddr *)&index_server_addr,
+                sizeof(index_server_addr)) < 0) {
         fprintf(stderr, "Can't connect to index server\n");
         close(udp_sock);
         exit(1);
     }
 
-    printf("Connected to index server at %s:%d\n", index_host, index_port);
+    printf("Connected to index server at %s:%d\n", index_server, index_port);
     printf("Peer name: %s\n", my_peer_name);
     printf("\nCommands:\n");
     printf("  register <content_name> <filename>  - Register content\n");
@@ -131,11 +133,11 @@ int main(int argc, char **argv)
     FD_SET(udp_sock, &afds); /* UDP socket */
 
     /* Main loop using select() */
-    while (1) {
+    for (;;) {
         rfds = afds;
-        
+
         /* Also add all TCP listening sockets to the set */
-        struct registered_content *reg = reg_list;
+        reg = reg_list;
         while (reg) {
             if (reg->tcp_socket >= 0) {
                 FD_SET(reg->tcp_socket, &rfds);
@@ -143,8 +145,11 @@ int main(int argc, char **argv)
             reg = reg->next;
         }
 
-        if (select(FD_SETSIZE, &rfds, NULL, NULL, NULL) < 0) {
-            if (errno == EINTR) continue;
+        nready = select(FD_SETSIZE, &rfds, NULL, NULL, NULL);
+        if (nready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             fprintf(stderr, "select error\n");
             break;
         }
@@ -157,10 +162,10 @@ int main(int argc, char **argv)
             input[strcspn(input, "\r\n")] = '\0';
             if (strlen(input) == 0) {
                 printf("> ");
-                continue;
+            } else {
+                handle_user_input(input);
+                printf("> ");
             }
-            handle_user_input(input);
-            printf("> ");
         }
 
         /* Check UDP socket */
@@ -172,14 +177,21 @@ int main(int argc, char **argv)
         reg = reg_list;
         while (reg) {
             if (reg->tcp_socket >= 0 && FD_ISSET(reg->tcp_socket, &rfds)) {
-                int new_sd = accept(reg->tcp_socket, NULL, NULL);
+                int new_sd;
+                pid_t pid;
+
+                new_sd = accept(reg->tcp_socket, NULL, NULL);
                 if (new_sd >= 0) {
-                    /* Fork to handle download request */
-                    if (fork() == 0) {
+                    pid = fork();
+                    if (pid == 0) {
+                        /* Child */
                         close(reg->tcp_socket);
                         handle_tcp_connection(new_sd, reg->content_name);
                         close(new_sd);
                         exit(0);
+                    }
+                    if (pid < 0) {
+                        fprintf(stderr, "fork error\n");
                     }
                     close(new_sd);
                 }
@@ -188,7 +200,9 @@ int main(int argc, char **argv)
         }
 
         /* Reap zombie processes */
-        while (waitpid(-1, NULL, WNOHANG) > 0);
+        while (waitpid(-1, NULL, WNOHANG) > 0) {
+            /* nothing */
+        }
     }
 
     /* Cleanup */
@@ -201,8 +215,16 @@ int main(int argc, char **argv)
 /* Handle user input commands */
 void handle_user_input(char *input)
 {
-    char cmd[32], arg1[64], arg2[64];
-    int n = sscanf(input, "%31s %63s %63s", cmd, arg1, arg2);
+    char cmd[32];
+    char arg1[64];
+    char arg2[64];
+    int n;
+
+    cmd[0] = '\0';
+    arg1[0] = '\0';
+    arg2[0] = '\0';
+
+    n = sscanf(input, "%31s %63s %63s", cmd, arg1, arg2);
 
     if (strcmp(cmd, "register") == 0) {
         if (n < 3) {
@@ -236,9 +258,15 @@ void handle_user_input(char *input)
 void register_content(const char *content_name, const char *filename)
 {
     struct pdu out;
+    struct pdu in;
     struct sockaddr_in tcp_addr;
     struct registered_content *existing;
+    struct registered_content *new_reg;
     int tcp_sock;
+    int fd;
+    struct sockaddr_in local_addr;
+    socklen_t alen;
+    ssize_t n;
 
     /* Check if content name is valid */
     if (strlen(content_name) > CONTENT_NAME_SIZE) {
@@ -254,7 +282,7 @@ void register_content(const char *content_name, const char *filename)
     }
 
     /* Check if file exists */
-    int fd = open(filename, O_RDONLY);
+    fd = open(filename, O_RDONLY);
     if (fd < 0) {
         printf("Error: Cannot open file '%s'\n", filename);
         return;
@@ -269,41 +297,41 @@ void register_content(const char *content_name, const char *filename)
     }
 
     /* Get local IP address for registration from UDP socket */
-    /* The UDP socket is connected, so getsockname() should return actual IP */
-    struct sockaddr_in local_addr;
-    socklen_t alen = sizeof(local_addr);
+    alen = sizeof(local_addr);
     if (getsockname(udp_sock, (struct sockaddr *)&local_addr, &alen) < 0) {
         printf("Error: Failed to get local IP address\n");
         close(tcp_sock);
         return;
     }
-    
-    /* Verify we got a valid IP address */
-    if (local_addr.sin_addr.s_addr == INADDR_ANY || local_addr.sin_addr.s_addr == 0) {
+
+    if (local_addr.sin_addr.s_addr == INADDR_ANY ||
+        local_addr.sin_addr.s_addr == 0) {
         printf("Error: Could not determine local IP address\n");
         close(tcp_sock);
         return;
     }
 
-    /* Prepare registration PDU */
-    /* Format: Peer Name (10 bytes) | Content Name (10 bytes) | IP (4 bytes) | Port (2 bytes) */
+    /* Prepare registration PDU:
+     * Peer Name (10 bytes) | Content Name (10 bytes) | IP (4 bytes) | Port (2 bytes)
+     */
     out.type = 'R';
     memset(out.data, 0, MAX_DATA_SIZE);
     strncpy(out.data, my_peer_name, PEER_NAME_SIZE);
     strncpy(out.data + PEER_NAME_SIZE, content_name, CONTENT_NAME_SIZE);
-    memcpy(out.data + PEER_NAME_SIZE + CONTENT_NAME_SIZE, &local_addr.sin_addr.s_addr, 4);
-    memcpy(out.data + PEER_NAME_SIZE + CONTENT_NAME_SIZE + 4, &tcp_addr.sin_port, 2);
+    memcpy(out.data + PEER_NAME_SIZE + CONTENT_NAME_SIZE,
+           &local_addr.sin_addr.s_addr, 4);
+    memcpy(out.data + PEER_NAME_SIZE + CONTENT_NAME_SIZE + 4,
+           &tcp_addr.sin_port, 2);
 
-    /* Send registration request */
-    if (write(udp_sock, &out, 1 + PEER_NAME_SIZE + CONTENT_NAME_SIZE + 6) < 0) {
+    n = write(udp_sock, &out, 1 + PEER_NAME_SIZE + CONTENT_NAME_SIZE + 6);
+    if (n < 0) {
         printf("Error: Failed to send registration\n");
         close(tcp_sock);
         return;
     }
 
     /* Wait for response */
-    struct pdu in;
-    ssize_t n = read(udp_sock, &in, sizeof(in));
+    n = read(udp_sock, &in, sizeof(in));
     if (n < 0) {
         printf("Error: Failed to receive response\n");
         close(tcp_sock);
@@ -311,17 +339,17 @@ void register_content(const char *content_name, const char *filename)
     }
 
     if (in.type == 'A') {
-        /* Add to registered list */
-        struct registered_content *new_reg = (struct registered_content *)malloc(sizeof(struct registered_content));
+        new_reg = (struct registered_content *)malloc(sizeof(struct registered_content));
         if (new_reg) {
+            memset(new_reg, 0, sizeof(*new_reg));
             strncpy(new_reg->peer_name, my_peer_name, PEER_NAME_SIZE);
             strncpy(new_reg->content_name, content_name, CONTENT_NAME_SIZE);
             strncpy(new_reg->filename, filename, sizeof(new_reg->filename) - 1);
-            new_reg->filename[sizeof(new_reg->filename) - 1] = '\0';
             new_reg->tcp_socket = tcp_sock;
             memcpy(&new_reg->tcp_addr, &tcp_addr, sizeof(tcp_addr));
             new_reg->next = reg_list;
             reg_list = new_reg;
+
             printf("Content '%s' registered successfully (TCP port: %d)\n",
                    content_name, ntohs(tcp_addr.sin_port));
         } else {
@@ -338,7 +366,12 @@ void register_content(const char *content_name, const char *filename)
 /* Create TCP socket for content with dynamic port assignment */
 int create_tcp_socket_for_content(const char *content_name, struct sockaddr_in *addr)
 {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    int sock;
+    socklen_t alen;
+
+    (void)content_name; /* unused for now */
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         return -1;
     }
@@ -353,7 +386,7 @@ int create_tcp_socket_for_content(const char *content_name, struct sockaddr_in *
         return -1;
     }
 
-    socklen_t alen = sizeof(*addr);
+    alen = sizeof(*addr);
     if (getsockname(sock, (struct sockaddr *)addr, &alen) < 0) {
         close(sock);
         return -1;
@@ -370,24 +403,31 @@ int create_tcp_socket_for_content(const char *content_name, struct sockaddr_in *
 /* Search for content and download */
 void search_and_download(const char *content_name)
 {
-    struct pdu out, in;
+    struct pdu out;
+    struct pdu in;
     struct sockaddr_in server_addr;
     int tcp_sock;
     char filename[256];
     int fd;
+    char buffer[BUFLEN];
+    ssize_t n;
+    ssize_t total;
+    ssize_t data_size;
+    ssize_t written;
 
     /* Send search request */
     out.type = 'S';
     memset(out.data, 0, MAX_DATA_SIZE);
     strncpy(out.data, content_name, CONTENT_NAME_SIZE);
 
-    if (write(udp_sock, &out, 1 + CONTENT_NAME_SIZE) < 0) {
+    n = write(udp_sock, &out, 1 + CONTENT_NAME_SIZE);
+    if (n < 0) {
         printf("Error: Failed to send search request\n");
         return;
     }
 
     /* Wait for response */
-    ssize_t n = read(udp_sock, &in, sizeof(in));
+    n = read(udp_sock, &in, sizeof(in));
     if (n < 0) {
         printf("Error: Failed to receive search response\n");
         return;
@@ -418,7 +458,8 @@ void search_and_download(const char *content_name)
         return;
     }
 
-    if (connect(tcp_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(tcp_sock, (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0) {
         printf("Error: Failed to connect to content server\n");
         close(tcp_sock);
         return;
@@ -428,7 +469,9 @@ void search_and_download(const char *content_name)
     out.type = 'D';
     memset(out.data, 0, MAX_DATA_SIZE);
     strncpy(out.data, content_name, CONTENT_NAME_SIZE);
-    if (write(tcp_sock, &out, 1 + CONTENT_NAME_SIZE) < 0) {
+
+    n = write(tcp_sock, &out, 1 + CONTENT_NAME_SIZE);
+    if (n < 0) {
         printf("Error: Failed to send download request\n");
         close(tcp_sock);
         return;
@@ -445,9 +488,8 @@ void search_and_download(const char *content_name)
     }
 
     /* Receive content data */
-    char buffer[BUFLEN];
-    ssize_t total = 0;
-    while (1) {
+    total = 0;
+    for (;;) {
         n = read(tcp_sock, &in, sizeof(in));
         if (n <= 0) {
             break;
@@ -460,24 +502,18 @@ void search_and_download(const char *content_name)
             unlink(filename);
             close(tcp_sock);
             return;
-        } else if (in.type == 'C') {
-            /* Content data */
-            ssize_t data_size = n - 1;
+        } else if (in.type == 'C' || in.type == 'F') {
+            data_size = n - 1;
             if (data_size > 0) {
-                ssize_t written = write(fd, in.data, data_size);
+                written = write(fd, in.data, data_size);
                 if (written != data_size) {
                     printf("Warning: Partial write\n");
                 }
                 total += written;
             }
-        } else if (in.type == 'F') {
-            /* Final packet */
-            ssize_t data_size = n - 1;
-            if (data_size > 0) {
-                write(fd, in.data, data_size);
-                total += data_size;
+            if (in.type == 'F') {
+                break;
             }
-            break;
         }
     }
 
@@ -492,17 +528,20 @@ void search_and_download(const char *content_name)
 /* List all registered contents */
 void list_contents(void)
 {
-    struct pdu out, in;
+    struct pdu out;
+    struct pdu in;
+    ssize_t n;
 
     out.type = 'O';
     memset(out.data, 0, MAX_DATA_SIZE);
 
-    if (write(udp_sock, &out, 1) < 0) {
+    n = write(udp_sock, &out, 1);
+    if (n < 0) {
         printf("Error: Failed to send list request\n");
         return;
     }
 
-    ssize_t n = read(udp_sock, &in, sizeof(in));
+    n = read(udp_sock, &in, sizeof(in));
     if (n < 0) {
         printf("Error: Failed to receive list response\n");
         return;
@@ -520,9 +559,13 @@ void list_contents(void)
 /* Deregister content */
 void deregister_content(const char *content_name)
 {
-    struct pdu out, in;
-    struct registered_content *reg = find_registered_content(content_name);
+    struct pdu out;
+    struct pdu in;
+    struct registered_content *reg;
+    struct registered_content *prev;
+    ssize_t n;
 
+    reg = find_registered_content(content_name);
     if (!reg) {
         printf("Error: Content '%s' not registered\n", content_name);
         return;
@@ -533,23 +576,23 @@ void deregister_content(const char *content_name)
     strncpy(out.data, my_peer_name, PEER_NAME_SIZE);
     strncpy(out.data + PEER_NAME_SIZE, content_name, CONTENT_NAME_SIZE);
 
-    if (write(udp_sock, &out, 1 + PEER_NAME_SIZE + CONTENT_NAME_SIZE) < 0) {
+    n = write(udp_sock, &out, 1 + PEER_NAME_SIZE + CONTENT_NAME_SIZE);
+    if (n < 0) {
         printf("Error: Failed to send deregistration request\n");
         return;
     }
 
-    ssize_t n = read(udp_sock, &in, sizeof(in));
+    n = read(udp_sock, &in, sizeof(in));
     if (n < 0) {
         printf("Error: Failed to receive response\n");
         return;
     }
 
     if (in.type == 'A') {
-        /* Remove from list and close TCP socket */
         if (reg == reg_list) {
             reg_list = reg->next;
         } else {
-            struct registered_content *prev = reg_list;
+            prev = reg_list;
             while (prev && prev->next != reg) {
                 prev = prev->next;
             }
@@ -571,9 +614,12 @@ void deregister_content(const char *content_name)
 /* Deregister all content */
 void deregister_all(void)
 {
-    struct registered_content *reg = reg_list;
+    struct registered_content *reg;
+    struct registered_content *next;
+
+    reg = reg_list;
     while (reg) {
-        struct registered_content *next = reg->next;
+        next = reg->next;
         deregister_content(reg->content_name);
         reg = next;
     }
@@ -582,25 +628,31 @@ void deregister_all(void)
 /* Handle TCP connection for content download */
 void handle_tcp_connection(int tcp_sock, const char *content_name)
 {
-    struct pdu in, out;
-    char filename[256];
+    struct pdu in;
+    struct pdu out;
+    struct registered_content *reg;
     int fd;
+    ssize_t n;
+    ssize_t r;
     char buffer[BUFLEN];
+    char filename[256];
 
     /* Receive download request */
-    ssize_t n = read(tcp_sock, &in, sizeof(in));
+    n = read(tcp_sock, &in, sizeof(in));
     if (n < 0 || in.type != 'D') {
         out.type = 'E';
         strncpy(out.data, "Invalid download request", MAX_DATA_SIZE - 1);
+        out.data[MAX_DATA_SIZE - 1] = '\0';
         write(tcp_sock, &out, 1 + strlen(out.data) + 1);
         return;
     }
 
     /* Use the content_name parameter to find the registered content */
-    struct registered_content *reg = find_registered_content(content_name);
+    reg = find_registered_content(content_name);
     if (!reg) {
         out.type = 'E';
         strncpy(out.data, "Content not found", MAX_DATA_SIZE - 1);
+        out.data[MAX_DATA_SIZE - 1] = '\0';
         write(tcp_sock, &out, 1 + strlen(out.data) + 1);
         return;
     }
@@ -608,41 +660,40 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
     /* Open the file using the stored filename */
     fd = open(reg->filename, O_RDONLY);
     if (fd < 0) {
-        /* Try downloaded_ prefix as fallback */
         snprintf(filename, sizeof(filename), "downloaded_%s", reg->content_name);
         fd = open(filename, O_RDONLY);
         if (fd < 0) {
             out.type = 'E';
-            snprintf(out.data, MAX_DATA_SIZE - 1, "Cannot open file '%s' for content '%s'", 
+            snprintf(out.data, MAX_DATA_SIZE - 1,
+                     "Cannot open file '%s' for content '%s'",
                      reg->filename, reg->content_name);
+            out.data[MAX_DATA_SIZE - 1] = '\0';
             write(tcp_sock, &out, 1 + strlen(out.data) + 1);
             return;
         }
     }
 
     /* Send file data */
-    while (1) {
-        ssize_t r = read(fd, buffer, MAX_DATA_SIZE);
+    for (;;) {
+        r = read(fd, buffer, MAX_DATA_SIZE);
         if (r < 0) {
             out.type = 'E';
             strncpy(out.data, "Read error", MAX_DATA_SIZE - 1);
+            out.data[MAX_DATA_SIZE - 1] = '\0';
             write(tcp_sock, &out, 1 + strlen(out.data) + 1);
             break;
         }
         if (r == 0) {
-            /* End of file */
             out.type = 'F';
             write(tcp_sock, &out, 1);
             break;
         }
         if (r < MAX_DATA_SIZE) {
-            /* Last packet */
             out.type = 'F';
             memcpy(out.data, buffer, r);
             write(tcp_sock, &out, 1 + r);
             break;
         } else {
-            /* More data to come */
             out.type = 'C';
             memcpy(out.data, buffer, r);
             write(tcp_sock, &out, 1 + r);
@@ -652,17 +703,27 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
     close(fd);
 }
 
-/* Handle UDP response from index server */
+/* Handle UDP response from index server
+ * Currently responses are handled synchronously in the
+ * functions that send requests. This function is kept
+ * for future async handling if needed.
+ */
 void handle_udp_response(void)
 {
-    /* Responses are handled synchronously in the functions that send requests */
-    /* This function is here for future async handling if needed */
+    char buf[1];
+
+    /* Drain any unexpected data to avoid blocking */
+    if (read(udp_sock, buf, sizeof(buf)) < 0) {
+        /* ignore */
+    }
 }
 
 /* Find registered content by name */
 struct registered_content *find_registered_content(const char *content_name)
 {
-    struct registered_content *current = reg_list;
+    struct registered_content *current;
+
+    current = reg_list;
     while (current) {
         if (strncmp(current->content_name, content_name, CONTENT_NAME_SIZE) == 0) {
             return current;
@@ -675,9 +736,12 @@ struct registered_content *find_registered_content(const char *content_name)
 /* Free registered content list */
 void free_reg_list(void)
 {
-    struct registered_content *current = reg_list;
+    struct registered_content *current;
+    struct registered_content *next;
+
+    current = reg_list;
     while (current) {
-        struct registered_content *next = current->next;
+        next = current->next;
         if (current->tcp_socket >= 0) {
             close(current->tcp_socket);
         }
@@ -686,4 +750,3 @@ void free_reg_list(void)
     }
     reg_list = NULL;
 }
-
