@@ -248,6 +248,9 @@ void handle_user_input(char *input)
         deregister_content(arg1);
     } else if (strcmp(cmd, "quit") == 0) {
         printf("Quitting...\n");
+        deregister_all();
+        free_reg_list();
+        close(udp_sock);
         exit(0);
     } else {
         printf("Unknown command: %s\n", cmd);
