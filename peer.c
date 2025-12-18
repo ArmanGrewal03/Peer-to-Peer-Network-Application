@@ -1,8 +1,3 @@
-/* peer.c - P2P Peer Application
- * Can register content, search, download, list, and deregister content.
- * Uses UDP for index server communication and TCP for content download.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,26 +15,24 @@
 
 #include "pdu.h"
 
-#define BUFLEN          256     /* buffer length */
+#define BUFLEN          256     // buffer length
 #define MAX_TCP_SOCKETS 10
 
-/* Structure to track registered content and their TCP sockets */
+// Structure used to keep track of registered content + respective TCP sockets
 struct registered_content {
     char peer_name[PEER_NAME_SIZE + 1];
     char content_name[CONTENT_NAME_SIZE + 1];
-    char filename[256];                 /* Filename of the content file */
-    int tcp_socket;                     /* Listening TCP socket for this content */
+    char filename[256];    
+    int tcp_socket;                   
     struct sockaddr_in tcp_addr;
     struct registered_content *next;
 };
 
-/* Global variables */
 struct registered_content *reg_list = NULL;
 int udp_sock = -1;
 struct sockaddr_in index_server_addr;
 char my_peer_name[PEER_NAME_SIZE + 1] = {0};
 
-/* Function prototypes */
 void register_content(const char *content_name, const char *filename);
 void search_and_download(const char *content_name);
 void list_contents(void);
@@ -62,7 +55,7 @@ int main(int argc, char **argv)
     struct registered_content *reg;
     int nready;
 
-    /* Parse command line arguments */
+    // Parse command line arguments
     switch (argc) {
     case 1:
         break;
@@ -78,7 +71,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    /* Get peer name */
+    // Get peer name
     printf("Enter your peer name (max %d characters): ", PEER_NAME_SIZE);
     fflush(stdout);
     if (!fgets(my_peer_name, sizeof(my_peer_name), stdin)) {
@@ -91,7 +84,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    /* Setup UDP socket for index server communication */
+    // Initialize and set up the UDP socket
     memset(&index_server_addr, 0, sizeof(index_server_addr));
     index_server_addr.sin_family = AF_INET;
     index_server_addr.sin_port = htons(index_port);
@@ -103,7 +96,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Can't get index server address\n");
         exit(1);
     }
-
+    //ERRORs for UDP socket
     udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_sock < 0) {
         fprintf(stderr, "Can't create UDP socket\n");
@@ -127,16 +120,17 @@ int main(int argc, char **argv)
     printf("  quit                                - Quit (auto-deregisters all)\n");
     printf("\n> ");
 
-    /* Setup select() for stdin and UDP socket */
+    // Setup select() for stdin and UDP socket. 
+    // Select() tool will handle the stdin and UDP
     FD_ZERO(&afds);
-    FD_SET(0, &afds);        /* stdin */
-    FD_SET(udp_sock, &afds); /* UDP socket */
+    FD_SET(0, &afds);        // stdin
+    FD_SET(udp_sock, &afds); // UDP socket
 
-    /* Main loop using select() */
+    // Main loop, will use select() to read inputs
     for (;;) {
-        rfds = afds;
+        rfds = afds; // The working set of file descriptors
 
-        /* Also add all TCP listening sockets to the set */
+        // ADD in all possible TCP listening sockets for download requests
         reg = reg_list;
         while (reg) {
             if (reg->tcp_socket >= 0) {
@@ -145,6 +139,7 @@ int main(int argc, char **argv)
             reg = reg->next;
         }
 
+        //Select() waits for on of the file descriptors to be ready
         nready = select(FD_SETSIZE, &rfds, NULL, NULL, NULL);
         if (nready < 0) {
             if (errno == EINTR) {
@@ -154,26 +149,26 @@ int main(int argc, char **argv)
             break;
         }
 
-        /* Check stdin */
+        // Check stdin for user input
         if (FD_ISSET(0, &rfds)) {
             if (!fgets(input, sizeof(input), stdin)) {
-                break; /* EOF */
+                break;
             }
             input[strcspn(input, "\r\n")] = '\0';
             if (strlen(input) == 0) {
                 printf("> ");
             } else {
-                handle_user_input(input);
+                handle_user_input(input); // Call user input handler 
                 printf("> ");
             }
         }
 
-        /* Check UDP socket */
+        // Check UDP socket
         if (FD_ISSET(udp_sock, &rfds)) {
             handle_udp_response();
         }
 
-        /* Check TCP sockets for incoming connections */
+        // Check TCP sockets for incoming connections
         reg = reg_list;
         while (reg) {
             if (reg->tcp_socket >= 0 && FD_ISSET(reg->tcp_socket, &rfds)) {
@@ -184,7 +179,7 @@ int main(int argc, char **argv)
                 if (new_sd >= 0) {
                     pid = fork();
                     if (pid == 0) {
-                        /* Child */
+                        // Child
                         close(reg->tcp_socket);
                         handle_tcp_connection(new_sd, reg->content_name);
                         close(new_sd);
@@ -199,20 +194,20 @@ int main(int argc, char **argv)
             reg = reg->next;
         }
 
-        /* Reap zombie processes */
+        // Reap zombie processes
         while (waitpid(-1, NULL, WNOHANG) > 0) {
-            /* nothing */
+
         }
     }
 
-    /* Cleanup */
+    // Cleanup
     deregister_all();
     free_reg_list();
     close(udp_sock);
     return 0;
 }
 
-/* Handle user input commands */
+// Handle user input
 void handle_user_input(char *input)
 {
     char cmd[32];
@@ -257,7 +252,7 @@ void handle_user_input(char *input)
     }
 }
 
-/* Register content with index server */
+// Register content with index server
 void register_content(const char *content_name, const char *filename)
 {
     struct pdu out;
@@ -271,20 +266,20 @@ void register_content(const char *content_name, const char *filename)
     socklen_t alen;
     ssize_t n;
 
-    /* Check if content name is valid */
+    // Check content name is valid
     if (strlen(content_name) > CONTENT_NAME_SIZE) {
         printf("Error: Content name too long (max %d characters)\n", CONTENT_NAME_SIZE);
         return;
     }
 
-    /* Check if already registered */
+    // Check if already registered
     existing = find_registered_content(content_name);
     if (existing) {
         printf("Error: Content '%s' already registered\n", content_name);
         return;
     }
 
-    /* Check if file exists */
+    // Check if file exists
     fd = open(filename, O_RDONLY);
     if (fd < 0) {
         printf("Error: Cannot open file '%s'\n", filename);
@@ -292,14 +287,14 @@ void register_content(const char *content_name, const char *filename)
     }
     close(fd);
 
-    /* Create TCP socket for this content */
+    // Create TCP socket for other peers to connect and download
     tcp_sock = create_tcp_socket_for_content(content_name, &tcp_addr);
     if (tcp_sock < 0) {
         printf("Error: Failed to create TCP socket\n");
         return;
     }
 
-    /* Get local IP address for registration from UDP socket */
+    // Get local IP address for registration from UDP socket
     alen = sizeof(local_addr);
     if (getsockname(udp_sock, (struct sockaddr *)&local_addr, &alen) < 0) {
         printf("Error: Failed to get local IP address\n");
@@ -314,10 +309,9 @@ void register_content(const char *content_name, const char *filename)
         return;
     }
 
-    /* Prepare registration PDU:
-     * Peer Name (10 bytes) | Content Name (10 bytes) | IP (4 bytes) | Port (2 bytes)
-     */
-    out.type = 'R';
+    // Prepare registration PDU:
+    // Peer Name (10 bytes) | Content Name (10 bytes) | IP (4 bytes) | Port (2 bytes)
+    out.type = 'R';// R for Registration
     memset(out.data, 0, MAX_DATA_SIZE);
     strncpy(out.data, my_peer_name, PEER_NAME_SIZE);
     strncpy(out.data + PEER_NAME_SIZE, content_name, CONTENT_NAME_SIZE);
@@ -333,7 +327,7 @@ void register_content(const char *content_name, const char *filename)
         return;
     }
 
-    /* Wait for response */
+    // Wait for response
     n = read(udp_sock, &in, sizeof(in));
     if (n < 0) {
         printf("Error: Failed to receive response\n");
@@ -341,7 +335,7 @@ void register_content(const char *content_name, const char *filename)
         return;
     }
 
-    if (in.type == 'A') {
+    if (in.type == 'A') { // A for Acknowledgement
         new_reg = (struct registered_content *)malloc(sizeof(struct registered_content));
         if (new_reg) {
             memset(new_reg, 0, sizeof(*new_reg));
@@ -350,7 +344,7 @@ void register_content(const char *content_name, const char *filename)
             strncpy(new_reg->filename, filename, sizeof(new_reg->filename) - 1);
             new_reg->tcp_socket = tcp_sock;
             memcpy(&new_reg->tcp_addr, &tcp_addr, sizeof(tcp_addr));
-            new_reg->next = reg_list;
+            new_reg->next = reg_list; // Add to the front of the list
             reg_list = new_reg;
 
             printf("Content '%s' registered successfully (TCP port: %d)\n",
@@ -359,20 +353,20 @@ void register_content(const char *content_name, const char *filename)
             close(tcp_sock);
             printf("Error: Memory allocation failed\n");
         }
-    } else if (in.type == 'E') {
+    } else if (in.type == 'E') {// E for Error
         in.data[MAX_DATA_SIZE - 1] = '\0';
         printf("Registration failed: %s\n", in.data);
         close(tcp_sock);
     }
 }
 
-/* Create TCP socket for content with dynamic port assignment */
+// Create TCP socket for content so other peers can download
 int create_tcp_socket_for_content(const char *content_name, struct sockaddr_in *addr)
 {
     int sock;
     socklen_t alen;
 
-    (void)content_name; /* unused for now */
+    (void)content_name; // unused parameter
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -382,7 +376,7 @@ int create_tcp_socket_for_content(const char *content_name, struct sockaddr_in *
     memset(addr, 0, sizeof(*addr));
     addr->sin_family = AF_INET;
     addr->sin_addr.s_addr = INADDR_ANY;
-    addr->sin_port = htons(0); /* Let OS assign port */
+    addr->sin_port = htons(0); // Let OS assign port 
 
     if (bind(sock, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
         close(sock);
@@ -403,7 +397,7 @@ int create_tcp_socket_for_content(const char *content_name, struct sockaddr_in *
     return sock;
 }
 
-/* Search for content and download */
+// Search for content and download
 void search_and_download(const char *content_name)
 {
     struct pdu out;
@@ -418,10 +412,10 @@ void search_and_download(const char *content_name)
     ssize_t data_size;
     ssize_t written;
 
-    /* Send search request */
-    out.type = 'S';
+    // Send search request
+    out.type = 'S';// S for Search for content and server
     memset(out.data, 0, MAX_DATA_SIZE);
-    strncpy(out.data, content_name, CONTENT_NAME_SIZE);
+    strncpy(out.data, content_name, CONTENT_NAME_SIZE); // Send Content Name in data
 
     n = write(udp_sock, &out, 1 + CONTENT_NAME_SIZE);
     if (n < 0) {
@@ -429,7 +423,7 @@ void search_and_download(const char *content_name)
         return;
     }
 
-    /* Wait for response */
+    // Wait for response
     n = read(udp_sock, &in, sizeof(in));
     if (n < 0) {
         printf("Error: Failed to receive search response\n");
@@ -440,12 +434,9 @@ void search_and_download(const char *content_name)
         in.data[MAX_DATA_SIZE - 1] = '\0';
         printf("Search failed: %s\n", in.data);
         return;
-    } else if (in.type != 'S' || n < 1 + 6) {
-        printf("Error: Invalid search response\n");
-        return;
     }
 
-    /* Extract server address */
+    // Extract server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     memcpy(&server_addr.sin_addr.s_addr, in.data, 4);
@@ -454,7 +445,7 @@ void search_and_download(const char *content_name)
     printf("Found content server: %s:%d\n",
            inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
 
-    /* Connect to content server via TCP */
+    // Connect to content server wioth TCP
     tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_sock < 0) {
         printf("Error: Failed to create TCP socket\n");
@@ -468,7 +459,7 @@ void search_and_download(const char *content_name)
         return;
     }
 
-    /* Send download request */
+    // Send download req
     out.type = 'D';
     memset(out.data, 0, MAX_DATA_SIZE);
     strncpy(out.data, content_name, CONTENT_NAME_SIZE);
@@ -480,7 +471,7 @@ void search_and_download(const char *content_name)
         return;
     }
 
-    /* Create output filename */
+    // Create output filename
     snprintf(filename, sizeof(filename), "downloaded_%s", content_name);
 
     fd = open(filename, O_CREAT | O_TRUNC | O_WRONLY, 0644);
@@ -490,7 +481,7 @@ void search_and_download(const char *content_name)
         return;
     }
 
-    /* Receive content data */
+    // Receive content data
     total = 0;
     for (;;) {
         n = read(tcp_sock, &in, sizeof(in));
@@ -509,9 +500,6 @@ void search_and_download(const char *content_name)
             data_size = n - 1;
             if (data_size > 0) {
                 written = write(fd, in.data, data_size);
-                if (written != data_size) {
-                    printf("Warning: Partial write\n");
-                }
                 total += written;
             }
             if (in.type == 'F') {
@@ -524,18 +512,18 @@ void search_and_download(const char *content_name)
     close(tcp_sock);
     printf("Downloaded %zd bytes to '%s'\n", total, filename);
 
-    /* Auto-register as content server */
+    // Auto-register as content server
     register_content(content_name, filename);
 }
 
-/* List all registered contents */
+// List all registered contents
 void list_contents(void)
 {
     struct pdu out;
     struct pdu in;
     ssize_t n;
 
-    out.type = 'O';
+    out.type = 'O'; // O for List of Online Registered Content
     memset(out.data, 0, MAX_DATA_SIZE);
 
     n = write(udp_sock, &out, 1);
@@ -559,7 +547,7 @@ void list_contents(void)
     }
 }
 
-/* Deregister content */
+// Deregister content
 void deregister_content(const char *content_name)
 {
     struct pdu out;
@@ -574,7 +562,7 @@ void deregister_content(const char *content_name)
         return;
     }
 
-    out.type = 'T';
+    out.type = 'T'; // T for de-registration
     memset(out.data, 0, MAX_DATA_SIZE);
     strncpy(out.data, my_peer_name, PEER_NAME_SIZE);
     strncpy(out.data + PEER_NAME_SIZE, content_name, CONTENT_NAME_SIZE);
@@ -591,8 +579,9 @@ void deregister_content(const char *content_name)
         return;
     }
 
-    if (in.type == 'A') {
-        if (reg == reg_list) {
+    if (in.type == 'A') { // A for Acknowledgement
+        // Remove from reg_list
+        if (reg == reg_list) { 
             reg_list = reg->next;
         } else {
             prev = reg_list;
@@ -614,7 +603,7 @@ void deregister_content(const char *content_name)
     }
 }
 
-/* Deregister all content */
+// Deregister all content
 void deregister_all(void)
 {
     struct registered_content *reg;
@@ -628,7 +617,7 @@ void deregister_all(void)
     }
 }
 
-/* Handle TCP connection for content download */
+// Handle TCP connection for content download
 void handle_tcp_connection(int tcp_sock, const char *content_name)
 {
     struct pdu in;
@@ -640,7 +629,7 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
     char buffer[BUFLEN];
     char filename[256];
 
-    /* Receive download request */
+    // Receive download request
     n = read(tcp_sock, &in, sizeof(in));
     if (n < 0 || in.type != 'D') {
         out.type = 'E';
@@ -650,7 +639,7 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
         return;
     }
 
-    /* Use the content_name parameter to find the registered content */
+    // Use the content_name parameter to find the registered content
     reg = find_registered_content(content_name);
     if (!reg) {
         out.type = 'E';
@@ -660,7 +649,7 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
         return;
     }
 
-    /* Open the file using the stored filename */
+    // Open the file using the stored filename
     fd = open(reg->filename, O_RDONLY);
     if (fd < 0) {
         snprintf(filename, sizeof(filename), "downloaded_%s", reg->content_name);
@@ -676,7 +665,7 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
         }
     }
 
-    /* Send file data */
+    // Send file data
     for (;;) {
         r = read(fd, buffer, MAX_DATA_SIZE);
         if (r < 0) {
@@ -706,22 +695,17 @@ void handle_tcp_connection(int tcp_sock, const char *content_name)
     close(fd);
 }
 
-/* Handle UDP response from index server
- * Currently responses are handled synchronously in the
- * functions that send requests. This function is kept
- * for future async handling if needed.
- */
+// Handle UDP response from index server
 void handle_udp_response(void)
 {
     char buf[1];
 
-    /* Drain any unexpected data to avoid blocking */
     if (read(udp_sock, buf, sizeof(buf)) < 0) {
-        /* ignore */
+        // ignore
     }
 }
 
-/* Find registered content by name */
+// Find registered content by name
 struct registered_content *find_registered_content(const char *content_name)
 {
     struct registered_content *current;
@@ -736,7 +720,7 @@ struct registered_content *find_registered_content(const char *content_name)
     return NULL;
 }
 
-/* Free registered content list */
+// Free registered content list
 void free_reg_list(void)
 {
     struct registered_content *current;

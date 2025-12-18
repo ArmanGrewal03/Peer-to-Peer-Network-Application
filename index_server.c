@@ -1,7 +1,3 @@
-/* index_server.c - P2P Index Server
- * Handles content registration, search, listing, and deregistration
- * Uses UDP for all communications with peers
- */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,10 +10,9 @@
 
 #define BUFLEN 256
 
-/* Global content list */
+
 struct content_entry *content_list = NULL;
 
-/* Function prototypes */
 void add_content(const char *peer_name, const char *content_name, struct sockaddr_in *addr);
 struct content_entry *find_content(const char *content_name);
 struct content_entry *find_least_used_content(const char *content_name);
@@ -33,7 +28,7 @@ int main(int argc, char *argv[])
     int port = 3000;
     struct pdu in, out;
 
-    /* Parse command line arguments */
+    // Parse command line arguments 
     switch (argc) {
     case 1:
         break;
@@ -45,7 +40,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    /* Initialize server address */
+    // Initialize server address
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = INADDR_ANY;
@@ -68,26 +63,22 @@ int main(int argc, char *argv[])
     printf("Index Server started on port %d\n", port);
     alen = sizeof(fsin);
 
-    /* Main server loop */
+    //Main Loop
     for (;;) {
         memset(&in, 0, sizeof(in));
         memset(&out, 0, sizeof(out));
 
-        /* Receive PDU from peer */
+        // Wait for incoming PDU and read it
         ssize_t n = recvfrom(s, &in, sizeof(in), 0, (struct sockaddr *)&fsin, &alen);
         if (n < 0) {
             fprintf(stderr, "recvfrom error\n");
             continue;
         }
 
-        if (n < 1) {
-            continue; /* Invalid PDU */
-        }
-
-        /* Process based on PDU type */
+        // Process based on PDU type
         switch (in.type) {
-        case 'R': { /* Registration */
-            /* Format: Peer Name (10 bytes) | Content Name (10 bytes) | IP (4 bytes) | Port (2 bytes) */
+        case 'R': { // R for Registration
+            // Format: Peer Name (10 bytes) | Content Name (10 bytes) | IP (4 bytes) | Port (2 bytes) 
             if (n < 1 + PEER_NAME_SIZE + CONTENT_NAME_SIZE + 6) {
                 out.type = 'E';
                 strncpy(out.data, "Invalid registration format", MAX_DATA_SIZE - 1);
@@ -102,15 +93,15 @@ int main(int argc, char *argv[])
             memcpy(peer_name, in.data, PEER_NAME_SIZE);
             memcpy(content_name, in.data + PEER_NAME_SIZE, CONTENT_NAME_SIZE);
             
-            /* Extract IP and Port from data */
+            // Extract IP and Port from data 
             memcpy(&reg_addr.sin_addr.s_addr, in.data + PEER_NAME_SIZE + CONTENT_NAME_SIZE, 4);
             memcpy(&reg_addr.sin_port, in.data + PEER_NAME_SIZE + CONTENT_NAME_SIZE + 4, 2);
             reg_addr.sin_family = AF_INET;
 
-            /* Check if already registered */
+            // Check if already registered 
             struct content_entry *existing = content_list;
             int duplicate = 0;
-            while (existing) {
+            while (existing) { // Loops through linked list to make sure not duplicate
                 if (strncmp(existing->peer_name, peer_name, PEER_NAME_SIZE) == 0 &&
                     strncmp(existing->content_name, content_name, CONTENT_NAME_SIZE) == 0) {
                     duplicate = 1;
@@ -135,8 +126,8 @@ int main(int argc, char *argv[])
             break;
         }
 
-        case 'S': { /* Search */
-            /* Format: Content Name (10 bytes) */
+        case 'S': { // S for Search for content and server
+            // Format: Content Name (10 bytes) 
             if (n < 1 + CONTENT_NAME_SIZE) {
                 out.type = 'E';
                 strncpy(out.data, "Invalid search format", MAX_DATA_SIZE - 1);
@@ -153,10 +144,10 @@ int main(int argc, char *argv[])
                 strncpy(out.data, "Content not found", MAX_DATA_SIZE - 1);
                 sendto(s, &out, 1 + strlen(out.data) + 1, 0, (struct sockaddr *)&fsin, alen);
             } else {
-                /* Increment usage count */
+                // Increment usage count 
                 entry->usage_count++;
                 
-                /* Format response: IP (4 bytes) | Port (2 bytes) */
+                //Format response: IP (4 bytes) | Port (2 bytes) 
                 out.type = 'S';
                 memcpy(out.data, &entry->addr.sin_addr.s_addr, 4);
                 memcpy(out.data + 4, &entry->addr.sin_port, 2);
@@ -168,8 +159,8 @@ int main(int argc, char *argv[])
             break;
         }
 
-        case 'T': { /* De-registration */
-            /* Format: Peer Name (10 bytes) | Content Name (10 bytes) */
+        case 'T': { // De-registration 
+            // Format: Peer Name (10 bytes) | Content Name (10 bytes) 
             if (n < 1 + PEER_NAME_SIZE + CONTENT_NAME_SIZE) {
                 out.type = 'E';
                 strncpy(out.data, "Invalid deregistration format", MAX_DATA_SIZE - 1);
@@ -219,7 +210,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-/* Add content to the list */
+// Add content to the linked list list 
 void add_content(const char *peer_name, const char *content_name, struct sockaddr_in *addr)
 {
     struct content_entry *new_entry = (struct content_entry *)malloc(sizeof(struct content_entry));
@@ -238,7 +229,7 @@ void add_content(const char *peer_name, const char *content_name, struct sockadd
     content_list = new_entry;
 }
 
-/* Find content entry by name */
+// Find content entry by name 
 struct content_entry *find_content(const char *content_name)
 {
     struct content_entry *current = content_list;
@@ -251,7 +242,7 @@ struct content_entry *find_content(const char *content_name)
     return NULL;
 }
 
-/* Find least used content server for load balancing */
+// Find least used content server for load balancing 
 struct content_entry *find_least_used_content(const char *content_name)
 {
     struct content_entry *current = content_list;
@@ -270,7 +261,7 @@ struct content_entry *find_least_used_content(const char *content_name)
     return best;
 }
 
-/* Remove content from list */
+//Remove content from linked list 
 int remove_content(const char *peer_name, const char *content_name)
 {
     struct content_entry *current = content_list;
@@ -293,7 +284,7 @@ int remove_content(const char *peer_name, const char *content_name)
     return 0;
 }
 
-/* Free all content entries */
+// Free all content entries from linked list
 void free_content_list(void)
 {
     struct content_entry *current = content_list;
@@ -305,8 +296,9 @@ void free_content_list(void)
     content_list = NULL;
 }
 
-/* List all registered contents */
+// List all registered contents 
 void list_all_contents(char *buffer, int max_size)
+// FORMAT: peer1|fileA|192.168.1.10:5000;peer2|fileB|192.168.1.11:6000;
 {
     struct content_entry *current = content_list;
     int pos = 0;
